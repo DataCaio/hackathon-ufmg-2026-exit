@@ -15,19 +15,27 @@ const nomesSubsidios = {
   comprovanteCredito: 'Comprovante de Crédito',
   dossie: 'Dossiê',
   demonstrativoDivida: 'Evolução da Dívida',
-  laudoReferenciado: 'Laudo Referenciado'
+  laudoReferenciado: 'Laudo Referenciado' 
 };
 
-// MÁGICA DE CONVERSÃO DE MOEDA (Ex: "R$ 12.400,00" -> 12400.00)
 const extrairValorNumerico = (str) => {
   if (!str) return 0;
   const numStr = String(str).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
   return parseFloat(numStr) || 0;
 };
 
-// FORMATAÇÃO PARA REAIS NA TELA
 const formatarMoeda = (valor) => {
-  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const num = Number(valor);
+  if (isNaN(num)) return 'R$ 0,00';
+  return num.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+};
+
+// FUNÇÃO NOVA: Formata milissegundos para texto amigável
+const formatarTempo = (ms) => {
+  const segTotal = Math.floor(ms / 1000);
+  const min = Math.floor(segTotal / 60);
+  const seg = segTotal % 60;
+  return `${min}m ${seg < 10 ? '0' : ''}${seg}s`;
 };
 
 function App() {
@@ -38,10 +46,12 @@ function App() {
 
   // BASE DE DADOS
   const [baseProcessos, setBaseProcessos] = useState(null);
-  const [statusCarregamentoBD, setStatusCarregamentoBD] = useState('Aguardando sincronização com IA...');
-
-  // MEMÓRIA EM TEMPO REAL PARA O DASHBOARD (Aderência)
+  
+  // MEMÓRIA EM TEMPO REAL PARA O DASHBOARD
   const [historicoDecisoes, setHistoricoDecisoes] = useState([]);
+  
+  // CRONÔMETRO
+  const [tempoInicioAnalise, setTempoInicioAnalise] = useState(null);
 
   const [processoIdBusca, setProcessoIdBusca] = useState('');
   const [processoAtual, setProcessoAtual] = useState(null);
@@ -60,15 +70,8 @@ function App() {
         if (!response.ok) throw new Error("Base não encontrada");
         return response.json();
       })
-      .then(data => {
-        setBaseProcessos(data);
-        const tamanhoBase = Array.isArray(data) ? data.length : Object.keys(data).length;
-        setStatusCarregamentoBD(`Base IA conectada: ${tamanhoBase} processos disponíveis.`);
-      })
-      .catch(err => {
-        console.error("Erro ao ler JSON:", err);
-        setStatusCarregamentoBD("Aviso: Arquivo base_processos.json não encontrado na pasta public.");
-      });
+      .then(data => setBaseProcessos(data))
+      .catch(err => console.error("Erro ao sincronizar base:", err));
   }, []);
 
   useEffect(() => {
@@ -128,13 +131,14 @@ function App() {
         return;
       }
 
+      // MAPEAMENTO ORIGINAL SEGURO
       const processoAdaptado = {
         id: encontradoBruto.id || encontradoBruto.id_processo || idNormalizado,
         autor: encontradoBruto.autor || encontradoBruto.Autor || 'Não informado',
         valorCausa: encontradoBruto.valorCausa || encontradoBruto.valor_causa || 'Não informado',
         chanceAcordo: encontradoBruto.chanceAcordo || encontradoBruto.chance_acordo || 0,
         valorSugeridoAcordo: encontradoBruto.valorSugeridoAcordo || encontradoBruto.valor_sugerido || '-',
-        recomendacao: encontradoBruto.recomendacao || encontradoBruto.Recomendacao || 'INDEFINIDA',
+        recomendacao: (encontradoBruto.recomendacao || encontradoBruto.Recomendacao || 'INDEFINIDA').toUpperCase(),
         justificativa: encontradoBruto.justificativa || encontradoBruto.Justificativa || 'Sem justificativa detalhada.',
         subsidios: encontradoBruto.subsidios || {
             contrato: Number(encontradoBruto.contrato) || 0,
@@ -144,7 +148,6 @@ function App() {
             demonstrativoDivida: Number(encontradoBruto.demonstrativoDivida || encontradoBruto.demonstrativo) || 0,
             laudoReferenciado: Number(encontradoBruto.laudoReferenciado || encontradoBruto.laudo) || 0
         },
-        // REMOVIDO O CAMPO DE TELEFONE
         contatoOposicao: encontradoBruto.contatoOposicao || (encontradoBruto.nome_advogado ? {
             nome: encontradoBruto.nome_advogado,
             oab: encontradoBruto.oab || 'Não informada',
@@ -155,6 +158,10 @@ function App() {
       setProcessoAtual(processoAdaptado);
       setDecisaoAdvogado('');
       setSubsidiosLidos(new Set()); 
+      
+      // DISPARA O CRONÔMETRO
+      setTempoInicioAnalise(Date.now());
+      
       setStatusBusca(`Processo ${processoAdaptado.id} carregado.`);
     }, 400);
   };
@@ -168,12 +175,23 @@ function App() {
     if (!processoAtual) return;
     setDecisaoAdvogado(decisao);
 
-    // SALVA A DECISÃO NO HISTÓRICO EM TEMPO REAL PARA O DASHBOARD
+    // PARA O CRONÔMETRO E CALCULA O TEMPO
+    const agora = Date.now();
+    const tempoGastoMs = tempoInicioAnalise ? (agora - tempoInicioAnalise) : 0;
+    const tempoFormatado = formatarTempo(tempoGastoMs);
+
+    // SALVA A DECISÃO NO HISTÓRICO PARA O DASHBOARD BANCÁRIO
     setHistoricoDecisoes(prev => {
-      // Evita duplicar se o advogado clicar várias vezes no mesmo processo
       const jaExiste = prev.find(h => h.idProcesso === processoAtual.id);
-      if (jaExiste) return prev.map(h => h.idProcesso === processoAtual.id ? { ...h, decisaoTomada: decisao } : h);
-      return [...prev, { idProcesso: processoAtual.id, recomendacaoIA: processoAtual.recomendacao, decisaoTomada: decisao }];
+      if (jaExiste) return prev.map(h => h.idProcesso === processoAtual.id ? { ...h, decisaoTomada: decisao, tempoFormatado } : h);
+      
+      return [...prev, { 
+        idProcesso: processoAtual.id, 
+        advogadoLogado: usuario,
+        recomendacaoIA: processoAtual.recomendacao, 
+        decisaoTomada: decisao,
+        tempoFormatado: tempoFormatado
+      }];
     });
 
     const logRegistro = {
@@ -181,6 +199,7 @@ function App() {
       advogadoLogado: usuario,
       decisaoTomada: decisao,
       recomendacaoIA: processoAtual.recomendacao,
+      tempoDeAnalise: tempoFormatado,
       documentosLidosParaEmbasamento: Array.from(subsidiosLidos).map(k => nomesSubsidios[k] || k),
       timestampAgendamento: new Date().toISOString()
     };
@@ -225,7 +244,6 @@ function App() {
       const rec = (p.recomendacao || p.Recomendacao || '').toUpperCase();
       if (rec === 'ACORDO') {
         dashQtdAcordo++;
-        // Calcula o lucro (Valor da causa - Valor Sugerido de Acordo)
         const vCausa = extrairValorNumerico(p.valorCausa || p.valor_causa);
         const vSugerido = extrairValorNumerico(p.valorSugeridoAcordo || p.valor_sugerido);
         if (vCausa > vSugerido && vSugerido > 0) {
@@ -240,7 +258,6 @@ function App() {
   const pctAcordo = dashTotalIA ? Math.round((dashQtdAcordo / dashTotalIA) * 100) : 0;
   const pctDefesa = dashTotalIA ? Math.round((dashQtdDefesa / dashTotalIA) * 100) : 0;
 
-  // Calcula a Aderência Real baseada nos cliques do advogado
   const totalAnalisadosPelosAdvogados = historicoDecisoes.length;
   let casosAderentes = 0;
   historicoDecisoes.forEach(h => {
@@ -271,11 +288,6 @@ function App() {
         <div style={{ maxWidth: '400px', margin: '0 auto', marginTop: '10vh', animation: 'fadeIn 0.5s ease' }}>
           <h2 style={{ marginBottom: '8px', textAlign: 'center', color: '#fff' }}>Entrar no ExitOS</h2>
           
-          <div style={{ marginBottom: '20px', padding: '10px', background: 'rgba(250, 204, 21, 0.05)', borderRadius: '8px', border: '1px solid rgba(250, 204, 21, 0.15)', textAlign: 'center' }}>
-            <p style={{ margin: 0, color: 'var(--color-primary)', fontSize: '12px', fontWeight: 'bold' }}>Status da Conexão IA</p>
-            <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '12px' }}>{statusCarregamentoBD}</p>
-          </div>
-
           <section>
             <form onSubmit={fazerLogin}>
               <label id="label-perfil-login" style={{ display: 'block', marginBottom: '8px', color: 'var(--text-soft)' }}>Perfil de acesso</label>
@@ -375,7 +387,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* CONTATO (ACORDO) - REMOVIDO TELEFONE */}
                 {processoAtual.recomendacao === 'ACORDO' && processoAtual.contatoOposicao && (
                   <div style={{ gridColumn: '1 / -1', marginTop: '5px', paddingTop: '15px', borderTop: '1px solid var(--border-subtle)' }}>
                     <p style={{ margin: '0 0 10px' }}><strong style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Contato para Negociação (Extraído via IA):</strong></p>
@@ -397,7 +408,7 @@ function App() {
 
           <section>
             <h3 style={{ color: '#fff' }}>3. Decisão Final (Auditoria Exit)</h3>
-            <p style={{ color: 'var(--text-soft)' }}>Registre a estratégia adotada.</p>
+            <p style={{ color: 'var(--text-soft)' }}>Registre a estratégia adotada. O tempo de análise está sendo monitorado.</p>
             <div style={{ display: 'flex', gap: '15px', marginBottom: '15px' }}>
               <button type="button" onClick={() => registrarDecisao('ACORDO')} disabled={!processoAtual} className="btn-enter-primary" style={{ flex: 1, padding: '14px', borderRadius: '10px', cursor: processoAtual ? 'pointer' : 'not-allowed', opacity: processoAtual ? 1 : 0.4 }}>Seguir com Acordo</button>
               <button type="button" onClick={() => registrarDecisao('DEFESA')} disabled={!processoAtual} className="btn-enter-outline" style={{ flex: 1, padding: '14px', borderRadius: '10px', cursor: processoAtual ? 'pointer' : 'not-allowed', opacity: processoAtual ? 1 : 0.4 }}>Seguir com Defesa</button>
@@ -421,68 +432,78 @@ function App() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
             
-            {/* KPI 1 - Aderência Dinâmica */}
             <section style={{ borderTop: '4px solid var(--color-primary)' }}>
               <h3 style={{ color: 'var(--color-primary)' }}>Aderência Real (Ao vivo)</h3>
-              <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Taxa de escritórios seguindo a IA nas operações atuais</p>
+              <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Taxa de escritórios seguindo a IA</p>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
                 <h1 style={{ fontSize: 'clamp(32px, 5vw, 48px)', margin: '10px 0', color: '#fff', wordBreak: 'break-word' }}>{pctAderenciaReal}%</h1>
-                {historicoDecisoes.length > 0 && <span style={{ color: 'var(--color-primary)', fontWeight: 'bold' }}>Em {historicoDecisoes.length} cliques</span>}
               </div>
               <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.85rem' }}>{casosAderentes} de {historicoDecisoes.length} decisões confirmadas seguiram a IA.</p>
             </section>
 
-            {/* KPI 2 - Economia Calculada da Base COM CORREÇÃO DE OVERFLOW */}
             <section style={{ borderTop: '4px solid var(--color-accent)' }}>
               <h3 style={{ color: 'var(--color-accent)' }}>Economia Potencial</h3>
-              <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Lucro projetado se todos os acordos forem fechados</p>
+              <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Lucro projetado em acordos</p>
               <h1 style={{ fontSize: 'clamp(28px, 4.5vw, 48px)', margin: '10px 0', color: '#fff', wordBreak: 'break-word' }}>{formatarMoeda(dashEconomiaGerada)}</h1>
-              <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.85rem' }}>Diferença entre Valores de Causa e Sugestões da IA.</p>
+              <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.85rem' }}>Diferença entre Causa e Sugestão.</p>
             </section>
 
-            {/* KPI 3 - Distribuição Dinâmica */}
             <section>
               <h3 style={{ color: '#fff' }}>Distribuição das recomendações da IA</h3>
-              
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '30px', marginBottom: '10px' }}>
                 <span style={{ color: 'var(--color-primary)', fontWeight: 'bold' }}>Acordo ({pctAcordo}%)</span>
                 <span style={{ color: 'var(--color-accent)', fontWeight: 'bold' }}>Defesa ({pctDefesa}%)</span>
               </div>
-
               <div className="enter-gradient-bar" style={{ marginTop: '8px' }} aria-hidden>
                 <span style={{ width: `${pctAcordo}%`, transition: 'width 0.5s' }} />
                 <span style={{ width: `${pctDefesa}%`, transition: 'width 0.5s' }} />
               </div>
-
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
                 <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.9rem' }}>{dashQtdAcordo} processos</p>
                 <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.9rem' }}>{dashQtdDefesa} processos</p>
               </div>
             </section>
-
-            {/* KPI 4 - Funil Dinâmico */}
-            <section>
-              <h3 style={{ color: '#fff' }}>Funil de Inteligência ExitOS</h3>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
-                <div style={{ backgroundColor: '#000', padding: '15px', borderRadius: '8px', borderLeft: '4px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--text-soft)' }}>1. Documentos Inseridos</span>
-                  <strong style={{ color: '#fff', fontSize: '1.2rem' }}>{dashTotalIA}</strong>
-                </div>
-                
-                <div style={{ background: 'linear-gradient(90deg, rgba(0,0,0,0.9), rgba(120, 53, 15, 0.2))', padding: '15px', borderRadius: '8px', borderLeft: '4px solid var(--color-accent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--text-soft)' }}>2. Oportunidades de Acordo</span>
-                  <strong style={{ color: 'var(--color-accent)', fontSize: '1.2rem' }}>{dashQtdAcordo}</strong>
-                </div>
-
-                <div style={{ backgroundColor: 'rgba(250, 204, 21, 0.05)', padding: '15px', borderRadius: '8px', borderLeft: '4px solid var(--color-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ color: 'var(--text-soft)' }}>3. Adotados pelos Advogados</span>
-                  <strong style={{ color: 'var(--color-primary)', fontSize: '1.2rem' }}>{casosAderentes}</strong>
-                </div>
-              </div>
-            </section>
-            
           </div>
+
+          {/* NOVA SEÇÃO: TABELA DE AUDITORIA DE TEMPO */}
+          <div style={{ marginTop: '40px', padding: '20px', background: 'rgba(0,0,0,0.3)', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
+            <h3 style={{ color: '#fff', margin: '0 0 5px' }}>Auditoria de Tempo e Produtividade</h3>
+            <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', marginBottom: '20px' }}>Monitoramento em tempo real do tempo de análise de cada advogado por processo.</p>
+            
+            {historicoDecisoes.length === 0 ? (
+              <p style={{ color: 'var(--color-primary)', fontStyle: 'italic' }}>Nenhum processo foi analisado nesta sessão ainda.</p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--color-primary)' }}>
+                      <th style={{ padding: '12px 8px', color: 'var(--text-soft)' }}>Processo</th>
+                      <th style={{ padding: '12px 8px', color: 'var(--text-soft)' }}>Advogado(a)</th>
+                      <th style={{ padding: '12px 8px', color: 'var(--color-accent)' }}>⏱️ Tempo Gasto</th>
+                      <th style={{ padding: '12px 8px', color: 'var(--text-soft)' }}>Decisão Tomada</th>
+                      <th style={{ padding: '12px 8px', color: 'var(--text-soft)' }}>Seguiu a IA?</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historicoDecisoes.map((item, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                        <td style={{ padding: '12px 8px', color: '#fff' }}><strong>{item.idProcesso}</strong></td>
+                        <td style={{ padding: '12px 8px', color: '#ccc' }}>{item.advogadoLogado || 'Advogado 01'}</td>
+                        <td style={{ padding: '12px 8px', color: '#fff', fontWeight: 'bold' }}>{item.tempoFormatado}</td>
+                        <td style={{ padding: '12px 8px', color: item.decisaoTomada === 'ACORDO' ? 'var(--color-primary)' : '#ccc' }}>{item.decisaoTomada}</td>
+                        <td style={{ padding: '12px 8px' }}>
+                          {item.decisaoTomada === item.recomendacaoIA 
+                            ? <span style={{ background: 'rgba(250, 204, 21, 0.15)', color: 'var(--color-primary)', padding: '4px 8px', borderRadius: '4px' }}>Sim</span> 
+                            : <span style={{ background: 'rgba(255,0,0,0.15)', color: '#ff6b6b', padding: '4px 8px', borderRadius: '4px' }}>Não</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+          
         </div>
       )}
       </div>
