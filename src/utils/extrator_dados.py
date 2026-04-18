@@ -7,8 +7,11 @@ from openai import OpenAI
 # Inicializa o cliente da OpenAI
 client = OpenAI()
 
-# --- AJUSTE: Agora o arquivo de saída é .json ---
-CAMINHO_SAIDA = "dados_advogados_extraidos.json"
+# --- AJUSTE: Caminho apontando para a pasta 'data' ---
+PASTA_DATA = "data"
+NOME_ARQUIVO = "dados_advogados_extraidos.json"
+CAMINHO_SAIDA = os.path.join(PASTA_DATA, NOME_ARQUIVO)
+
 CAMINHOS_PDF = [
     "/home/gabriel/Desktop/Hackathon/hackathon-ufmg-2026-exit/data/data/processos_exemplo/0654321-09.2024.8.04.0001/autos/01_Autos_Processo_0654321-09-2024-8-04-0001.pdf",
     "/home/gabriel/Desktop/Hackathon/hackathon-ufmg-2026-exit/data/data/processos_exemplo/0801234-56.2024.8.10.0001/autos/01_Autos_Processo_0801234-56-2024-8-10-0001.pdf"
@@ -52,10 +55,15 @@ def processar_texto_com_openai(texto: str) -> dict:
         return {"nome_advogado": "Erro", "oab": "Erro", "email_advogado": "Erro"}
 
 def main():
+    # --- GARANTIR QUE A PASTA DATA EXISTE ---
+    if not os.path.exists(PASTA_DATA):
+        os.makedirs(PASTA_DATA)
+        print(f"Pasta '{PASTA_DATA}' criada.")
+
     # --- LÓGICA DE SOBRESCREVER ---
     if os.path.exists(CAMINHO_SAIDA):
         os.remove(CAMINHO_SAIDA)
-        print(f"Arquivo antigo {CAMINHO_SAIDA} removido.")
+        print(f"Arquivo antigo em '{CAMINHO_SAIDA}' removido para atualização.")
 
     resultados = []
 
@@ -77,15 +85,12 @@ def main():
     if resultados:
         df = pd.DataFrame(resultados)
         
-        # --- AJUSTE: Exportação para JSON ---
-        # orient='records' cria uma lista de objetos [{...}, {...}]
-        # indent=4 deixa o arquivo legível para humanos
-        # force_ascii=False garante que acentos e caracteres especiais fiquem corretos
+        # Exportação para JSON dentro da pasta data
         df.to_json(CAMINHO_SAIDA, orient='records', indent=4, force_ascii=False)
         
-        print(f"\nSucesso! Novo arquivo JSON gerado em: {os.path.abspath(CAMINHO_SAIDA)}")
+        print(f"\n🚀 Sucesso! JSON gerado em: {os.path.abspath(CAMINHO_SAIDA)}")
     else:
-        print("Nenhum dado extraído.")
+        print("Nenhum dado extraído para salvar.")
 
 if __name__ == "__main__":
     main()
