@@ -131,12 +131,29 @@ def _normalize_target(target: pd.Series) -> pd.Series:
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
+    if pd.isna(value):
+        return default
     if value is None or value == "":
         return default
     try:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_binary_flag(value: Any) -> int:
+    if pd.isna(value) or value is None or value == "":
+        return 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"0", "false", "nao", "não", "n"}:
+            return 0
+        if normalized in {"1", "true", "sim", "s"}:
+            return 1
+    try:
+        return 1 if int(float(value)) > 0 else 0
+    except (TypeError, ValueError):
+        return 1 if bool(value) else 0
 
 
 def normalize_case(case_data: dict[str, Any]) -> dict[str, Any]:
@@ -146,7 +163,7 @@ def normalize_case(case_data: dict[str, Any]) -> dict[str, Any]:
     normalized["Valor da causa"] = _safe_float(case_data.get("Valor da causa"), 0.0)
 
     for column in DOCUMENT_COLUMNS:
-        normalized[column] = int(bool(case_data.get(column, 0)))
+        normalized[column] = _safe_binary_flag(case_data.get(column, 0))
 
     return normalized
 
