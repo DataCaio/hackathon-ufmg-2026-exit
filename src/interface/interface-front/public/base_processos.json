@@ -1,0 +1,69 @@
+{
+  "PROC-1001": {
+    "id": "PROC-1001",
+    "autor": "Maria da Silva",
+    "valorCausa": "R$ 12.400,00",
+    "chanceAcordo": 82,
+    "riscoCondenacao": 71,
+    "valorSugeridoAcordo": "R$ 3.500,00",
+    "recomendacao": "ACORDO",
+    "justificativa": "Contrato sem assinatura biométrica e comprovante de crédito com inconsistência.",
+    "subsidios": {
+      "contrato": 0,
+      "extrato": 0,
+      "comprovanteCredito": 0,
+      "dossie": 1,
+      "demonstrativoDivida": 1,
+      "laudoReferenciado": 1
+    },
+    "contatoOposicao": {
+      "nome": "Dra. Camila Souza Ferreira",
+      "oab": "OAB 9.876",
+      "telefone": "(Controle Interno)",
+      "email": "camila.ferreira@advogados.com.br"
+    }
+  },
+  "PROC-1002": {
+    "id": "PROC-1002",
+    "autor": "João Ferreira",
+    "valorCausa": "R$ 7.200,00",
+    "chanceAcordo": 35,
+    "riscoCondenacao": 29,
+    "valorSugeridoAcordo": "Não recomendado",
+    "recomendacao": "DEFESA",
+    "justificativa": "Documentação robusta: contrato validado, comprovante BACEN presente e extrato compatível.",
+    "subsidios": {
+      "contrato": 1,
+      "extrato": 1,
+      "comprovanteCredito": 0,
+      "dossie": 1,
+      "demonstrativoDivida": 1,
+      "laudoReferenciado": 1
+    },
+    "contatoOposicao": null
+  },
+  "PROC-1003": {
+    "id": "PROC-1003",
+    "autor": "Ana Beatriz Souza",
+    "valorCausa": "R$ 20.000,00",
+    "chanceAcordo": 76,
+    "riscoCondenacao": 68,
+    "valorSugeridoAcordo": "R$ 6.200,00",
+    "recomendacao": "ACORDO",
+    "justificativa": "Dossiê aponta divergência de assinatura e histórico de decisões semelhantes favoráveis ao autor.",
+    "subsidios": {
+      "contrato": 0,
+      "extrato": 1,
+      "comprovanteCredito": 1,
+      "dossie": 1,
+      "demonstrativoDivida": 1,
+      "laudoReferenciado": 0
+    },
+    "contatoOposicao": {
+      "nome": "Rodrigo Mendes Albuquerque",
+      "oab": "OAB 12.345",
+          "telefone": "(Controle Interno)",
+      "email": "rodrigo.albuquerque@advogados.com.br"
+    }
+  }
+}
