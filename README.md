@@ -4,6 +4,78 @@
 
 > Aplique IA para resolver, em equipe, um problema real que toda grande empresa do Brasil enfrenta.
 
+## Como Executar a Solução
+
+Assumindo que o ambiente virtual já está ativado, rode:
+
+```bash
+python src/policy/app.py
+```
+
+O sistema usa por padrão:
+
+- `data/data.csv` como base estruturada dos processos
+- `data/processos_exemplo/` como diretório com os processos reais
+- `data/sentencas.csv` como base histórica para treino dos modelos
+
+Se os artefatos treinados ainda não existirem em `data/policy_artifacts/`, eles são gerados automaticamente na primeira execução.
+
+### Variável de ambiente obrigatória para defesa
+
+Quando algum processo for classificado como `defesa`, o sistema chama a API da OpenAI para gerar a minuta. Nesse caso, a variável `OPENAI_API_KEY` precisa estar definida:
+
+```bash
+export OPENAI_API_KEY="sua_chave_aqui"
+python src/policy/app.py
+```
+
+Se a chave não existir, a execução levanta erro. Não há fallback local para defesa.
+
+### Comandos úteis
+
+```bash
+# Processar todos os processos exemplo
+python src/policy/app.py
+
+# Mostrar resumo textual além do JSON
+python src/policy/app.py --pretty
+
+# Forçar re-treino dos modelos
+python src/policy/app.py --force-retrain
+
+# Rodar somente um processo específico
+python src/policy/app.py --processo-id 0654321-09.2024.8.04.0001
+```
+
+## Como o Sistema Funciona
+
+O fluxo completo é este:
+
+1. O `app.py` lista todos os diretórios dentro de `data/processos_exemplo/`.
+2. Cada diretório precisa ter o nome exato do número do processo.
+3. Para cada processo, o sistema procura a linha correspondente em `data/data.csv`.
+4. Essa linha do `data.csv` é a fonte dos dados estruturados usados na inferência.
+5. A `src/policy/politicaDecisao.py` carrega ou treina o modelo de classificação e decide entre `acordo` ou `defesa`.
+6. Se a decisão for `acordo`, a `src/policy/politicaAcordo.py` prevê o valor esperado de condenação e recomenda uma faixa de oferta.
+7. Se a decisão for `defesa`, a `src/policy/politicaDefesa.py` procura os documentos em `data/processos_exemplo/<numero_processo>/subsidios/`, extrai o texto disponível e chama a OpenAI para montar a minuta.
+8. Ao final, o `app.py` imprime um JSON consolidado com o resultado de todos os processos avaliados.
+
+### Entradas principais
+
+- `data/sentencas.csv`: histórico usado para treinar os modelos de decisão e acordo
+- `data/data.csv`: base estruturada dos processos exemplo
+- `data/processos_exemplo/<numero_processo>/autos/`: autos do processo
+- `data/processos_exemplo/<numero_processo>/subsidios/`: subsídios do banco para defesa
+
+### Saídas principais
+
+- decisão de `acordo` ou `defesa`
+- probabilidade de êxito na defesa
+- subsídios prioritários para o caso
+- valor sugerido de acordo, quando aplicável
+- minuta de defesa gerada pela OpenAI, quando aplicável
+- artefatos treinados em `data/policy_artifacts/`
+
 ---
 
 ## Premiação

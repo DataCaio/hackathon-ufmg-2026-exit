@@ -13,6 +13,7 @@ try:
     from .politicaDecisao import CASE_ID_COLUMN, DOCUMENT_COLUMNS, PoliticaDecisao, normalize_case
     from .politicaDefesa import PoliticaDefesa
     from ..utils.extrator_contatos import ExtratorContatoAutos
+    from ..utils.sincronizador_interface import sync_interface_payload
 except ImportError:
     CURRENT_FILE = Path(__file__).resolve()
     PROJECT_ROOT = CURRENT_FILE.parents[2]
@@ -22,10 +23,12 @@ except ImportError:
     from politicaDecisao import CASE_ID_COLUMN, DOCUMENT_COLUMNS, PoliticaDecisao, normalize_case
     from politicaDefesa import PoliticaDefesa
     from src.utils.extrator_contatos import ExtratorContatoAutos
+    from src.utils.sincronizador_interface import sync_interface_payload
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_CASES_PATH = ROOT_DIR / "data" / "data.csv"
 DEFAULT_PROCESSOS_DIR = ROOT_DIR / "data" / "processos_exemplo"
+DEFAULT_FRONTEND_PUBLIC_DIR = ROOT_DIR / "src" / "interface" / "interface-front" / "public"
 
 
 def _write_agreement_json(
@@ -170,12 +173,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
         results.append(result)
 
-    return {
+    payload = {
         "total_processos": len(results),
         "csv_path": str(csv_path),
         "processos_dir": str(processos_root),
         "resultados": results,
     }
+    if not args.skip_interface_sync and Path(args.frontend_public_dir).exists():
+        payload["interface_sync"] = {
+            "base_processos_json": sync_interface_payload(
+                payload,
+                frontend_public_dir=args.frontend_public_dir,
+            )
+        }
+    return payload
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,6 +217,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--force-retrain",
         action="store_true",
         help="Reprocessa os modelos de decisão e acordo antes da inferência.",
+    )
+    parser.add_argument(
+        "--frontend-public-dir",
+        default=str(DEFAULT_FRONTEND_PUBLIC_DIR),
+        help="Diretório public do frontend para sincronizar os dados consumidos pela interface.",
+    )
+    parser.add_argument(
+        "--skip-interface-sync",
+        action="store_true",
+        help="Não exporta a base consolidada para a interface.",
     )
     return parser
 
@@ -252,6 +273,8 @@ def _format_human_summary(result: dict[str, Any]) -> str:
         f"CSV utilizado: {result['csv_path']}",
         f"Diretório de processos: {result['processos_dir']}",
     ]
+    if "interface_sync" in result:
+        lines.append(f"Base sincronizada para a interface: {result['interface_sync']['base_processos_json']}")
     for item in result["resultados"]:
         lines.append("")
         lines.append(_format_single_result(item))

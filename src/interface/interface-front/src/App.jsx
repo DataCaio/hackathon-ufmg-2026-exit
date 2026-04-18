@@ -18,6 +18,86 @@ const nomesSubsidios = {
   laudoReferenciado: 'Laudo Referenciado' 
 };
 
+const formatarPercentual = (valor, casas = 1) => {
+  const numero = Number(valor);
+  if (Number.isNaN(numero)) return '0%';
+  return `${(numero * 100).toFixed(casas)}%`;
+};
+
+const montarFeaturesMonitoradas = (featureImportances = {}) => {
+  const entries = Object.entries(featureImportances);
+  const maxValor = entries.length ? Math.max(...entries.map(([, valor]) => Number(valor) || 0), 0.000001) : 1;
+  const featuresDocumentais = new Set([
+    'Contrato',
+    'Extrato',
+    'Comprovante de crédito',
+    'Dossiê',
+    'Demonstrativo de evolução da dívida',
+    'Laudo referenciado'
+  ]);
+
+  return entries
+    .map(([nome, valor]) => ({
+      nome,
+      valor: Number(valor) || 0,
+      largura: `${((Number(valor) || 0) / maxValor) * 100}%`,
+      subsidio: featuresDocumentais.has(nome)
+    }))
+    .sort((a, b) => b.valor - a.valor);
+};
+
+const adaptProcesso = (encontradoBruto, idFallback = '') => {
+  if (!encontradoBruto) return null;
+
+  const documentos = encontradoBruto.documentos || encontradoBruto.arquivos || {};
+  const subsidios = encontradoBruto.subsidios || {
+    contrato: Number(encontradoBruto.contrato) || 0,
+    extrato: Number(encontradoBruto.extrato) || 0,
+    comprovanteCredito: Number(encontradoBruto.comprovanteCredito || encontradoBruto.comprovante) || 0,
+    dossie: Number(encontradoBruto.dossie) || 0,
+    demonstrativoDivida: Number(encontradoBruto.demonstrativoDivida || encontradoBruto.demonstrativo) || 0,
+    laudoReferenciado: Number(encontradoBruto.laudoReferenciado || encontradoBruto.laudo) || 0
+  };
+
+  const contatoOposicao = encontradoBruto.contatoOposicao || (encontradoBruto.nome_advogado ? {
+    nome: encontradoBruto.nome_advogado,
+    oab: encontradoBruto.oab || 'Não informada',
+    email: encontradoBruto.email_advogado || 'Sem e-mail'
+  } : null);
+
+  return {
+    id: encontradoBruto.id || encontradoBruto.id_processo || encontradoBruto.numero_processo || encontradoBruto.Processo || idFallback,
+    autor: encontradoBruto.autor || encontradoBruto.Autor || encontradoBruto.parteAutora?.nome || 'Não informado',
+    parteAutora: encontradoBruto.parteAutora || null,
+    valorCausa: encontradoBruto.valorCausa || encontradoBruto.valor_causa || 'Não informado',
+    chanceAcordo: Number(encontradoBruto.chanceAcordo || encontradoBruto.chance_acordo || 0),
+    chanceDefesa: Number(encontradoBruto.chanceDefesa || 0),
+    valorSugeridoAcordo: encontradoBruto.valorSugeridoAcordo || encontradoBruto.valor_sugerido || 'Não recomendado',
+    valorCondenacaoPrevisto: encontradoBruto.valorCondenacaoPrevisto || '',
+    faixaNegociacao: encontradoBruto.faixaNegociacao || '',
+    economiaEstimada: encontradoBruto.economiaEstimada || '',
+    recomendacao: String(encontradoBruto.recomendacao || encontradoBruto.Recomendacao || 'INDEFINIDA').toUpperCase(),
+    justificativa: encontradoBruto.justificativa || encontradoBruto.Justificativa || 'Sem justificativa detalhada.',
+    subsidios,
+    subsidiosPrioritarios: encontradoBruto.subsidiosPrioritarios || [],
+    subsidiosAusentesCriticos: encontradoBruto.subsidiosAusentesCriticos || [],
+    estrategiaDefesa: encontradoBruto.estrategiaDefesa || '',
+    contatoOposicao,
+    documentos: {
+      autosPdf: documentos.autosPdf || '',
+      contatoJson: documentos.contatoJson || '',
+      acordoJson: documentos.acordoJson || '',
+      defesaPdf: documentos.defesaPdf || '',
+      subsidios: documentos.subsidios || {}
+    }
+  };
+};
+
+const listarProcessos = (base) => {
+  const listaBruta = Array.isArray(base) ? base : Object.values(base || {});
+  return listaBruta.map((item) => adaptProcesso(item)).filter(Boolean);
+};
+
 const extrairValorNumerico = (str) => {
   if (!str) return 0;
   const numStr = String(str).replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
@@ -46,6 +126,8 @@ function App() {
 
   // BASE DE DADOS
   const [baseProcessos, setBaseProcessos] = useState(null);
+  const [origemBase, setOrigemBase] = useState('Base ainda não sincronizada.');
+  const [monitorModelo, setMonitorModelo] = useState(null);
   
   // MEMÓRIA EM TEMPO REAL PARA O DASHBOARD
   const [historicoDecisoes, setHistoricoDecisoes] = useState([]);
@@ -65,13 +147,48 @@ function App() {
   const perfilMenuRef = useRef(null);
 
   useEffect(() => {
-    fetch('/base_processos.json')
-      .then(response => {
-        if (!response.ok) throw new Error("Base não encontrada");
-        return response.json();
-      })
-      .then(data => setBaseProcessos(data))
-      .catch(err => console.error("Erro ao sincronizar base:", err));
+    const carregarBase = async () => {
+      const fontes = [
+        { url: '/generated/base_processos.json', label: 'Dados reais sincronizados pelo policy' },
+        { url: '/base_processos.json', label: 'Base mock de fallback da interface' }
+      ];
+
+      for (const fonte of fontes) {
+        try {
+          const response = await fetch(fonte.url, { cache: 'no-store' });
+          if (!response.ok) continue;
+          const data = await response.json();
+          setBaseProcessos(data);
+          setOrigemBase(fonte.label);
+          return;
+        } catch (error) {
+          console.error(`Erro ao carregar ${fonte.url}:`, error);
+        }
+      }
+
+      setOrigemBase('Nenhuma base foi carregada.');
+    };
+
+    carregarBase();
+  }, []);
+
+  useEffect(() => {
+    const carregarMonitorModelo = async () => {
+      try {
+        const response = await fetch('/generated/modelo_decisao_metricas.json', { cache: 'no-store' });
+        if (!response.ok) {
+          setMonitorModelo(null);
+          return;
+        }
+        const data = await response.json();
+        setMonitorModelo(data);
+      } catch (error) {
+        console.error('Erro ao carregar monitoramento do modelo:', error);
+        setMonitorModelo(null);
+      }
+    };
+
+    carregarMonitorModelo();
   }, []);
 
   useEffect(() => {
@@ -131,29 +248,7 @@ function App() {
         return;
       }
 
-      // MAPEAMENTO ORIGINAL SEGURO
-      const processoAdaptado = {
-        id: encontradoBruto.id || encontradoBruto.id_processo || idNormalizado,
-        autor: encontradoBruto.autor || encontradoBruto.Autor || 'Não informado',
-        valorCausa: encontradoBruto.valorCausa || encontradoBruto.valor_causa || 'Não informado',
-        chanceAcordo: encontradoBruto.chanceAcordo || encontradoBruto.chance_acordo || 0,
-        valorSugeridoAcordo: encontradoBruto.valorSugeridoAcordo || encontradoBruto.valor_sugerido || '-',
-        recomendacao: (encontradoBruto.recomendacao || encontradoBruto.Recomendacao || 'INDEFINIDA').toUpperCase(),
-        justificativa: encontradoBruto.justificativa || encontradoBruto.Justificativa || 'Sem justificativa detalhada.',
-        subsidios: encontradoBruto.subsidios || {
-            contrato: Number(encontradoBruto.contrato) || 0,
-            extrato: Number(encontradoBruto.extrato) || 0,
-            comprovanteCredito: Number(encontradoBruto.comprovanteCredito || encontradoBruto.comprovante) || 0,
-            dossie: Number(encontradoBruto.dossie) || 0,
-            demonstrativoDivida: Number(encontradoBruto.demonstrativoDivida || encontradoBruto.demonstrativo) || 0,
-            laudoReferenciado: Number(encontradoBruto.laudoReferenciado || encontradoBruto.laudo) || 0
-        },
-        contatoOposicao: encontradoBruto.contatoOposicao || (encontradoBruto.nome_advogado ? {
-            nome: encontradoBruto.nome_advogado,
-            oab: encontradoBruto.oab || 'Não informada',
-            email: encontradoBruto.email_advogado || 'Sem e-mail'
-        } : null)
-      };
+      const processoAdaptado = adaptProcesso(encontradoBruto, idNormalizado);
 
       setProcessoAtual(processoAdaptado);
       setDecisaoAdvogado('');
@@ -166,9 +261,20 @@ function App() {
     }, 400);
   };
 
+  const abrirArquivo = (url) => {
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   const abrirSubsidio = (chave) => {
     setSubsidiosLidos(prev => new Set(prev).add(chave));
-    alert(`Simulador ExitOS: Abrindo a documentação do [${nomesSubsidios[chave] || chave}] para leitura.`);
+    const arquivos = processoAtual?.documentos?.subsidios?.[chave] || [];
+    const primeiroArquivo = arquivos[0];
+    if (primeiroArquivo?.url) {
+      abrirArquivo(primeiroArquivo.url);
+      return;
+    }
+    alert(`Não foi encontrado um arquivo sincronizado para [${nomesSubsidios[chave] || chave}].`);
   };
 
   const registrarDecisao = (decisao) => {
@@ -237,15 +343,15 @@ function App() {
   let dashEconomiaGerada = 0;
 
   if (baseProcessos) {
-    const listaProcessos = Array.isArray(baseProcessos) ? baseProcessos : Object.values(baseProcessos);
+    const listaProcessos = listarProcessos(baseProcessos);
     dashTotalIA = listaProcessos.length;
 
     listaProcessos.forEach(p => {
-      const rec = (p.recomendacao || p.Recomendacao || '').toUpperCase();
+      const rec = (p.recomendacao || '').toUpperCase();
       if (rec === 'ACORDO') {
         dashQtdAcordo++;
-        const vCausa = extrairValorNumerico(p.valorCausa || p.valor_causa);
-        const vSugerido = extrairValorNumerico(p.valorSugeridoAcordo || p.valor_sugerido);
+        const vCausa = extrairValorNumerico(p.valorCausa);
+        const vSugerido = extrairValorNumerico(p.valorSugeridoAcordo);
         if (vCausa > vSugerido && vSugerido > 0) {
           dashEconomiaGerada += (vCausa - vSugerido);
         }
@@ -331,11 +437,12 @@ function App() {
         <div style={{ animation: 'fadeIn 0.5s ease' }}>
           <h2 style={{ marginBottom: '8px', color: '#fff' }}>Portal do escritório</h2>
           <p style={{ margin: '0 0 24px', color: 'var(--text-soft)', fontSize: '15px' }}>Consulte o processo e siga a recomendação da política de acordos Exit</p>
+          <p style={{ margin: '0 0 20px', color: 'var(--color-primary)', fontSize: '13px' }}>Origem da base: {origemBase}</p>
 
           <section style={{ marginBottom: '24px' }}>
             <h3 style={{ color: 'var(--color-primary)' }}>1. Consultar Processo</h3>
             <form onSubmit={consultarProcesso} style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-              <input type="text" value={processoIdBusca} onChange={(e) => setProcessoIdBusca(e.target.value)} placeholder="Ex: PROC-1001" />
+              <input type="text" value={processoIdBusca} onChange={(e) => setProcessoIdBusca(e.target.value)} placeholder="Ex: 0654321-09.2024.8.04.0001" />
               <button type="submit" className="btn-enter-primary" style={{ padding: '12px 24px', borderRadius: '10px', cursor: 'pointer', fontWeight: 700, flexShrink: 0 }}>Analisar</button>
             </form>
             <p style={{ marginTop: '12px', marginBottom: 0, color: 'var(--text-soft)', fontSize: '14px' }}>{statusBusca}</p>
@@ -356,10 +463,24 @@ function App() {
                     <strong style={{ color: 'var(--text-soft)' }}>Recomendação:</strong> {processoAtual.recomendacao}
                   </p>
                   <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Chance de Acordo:</strong> {processoAtual.chanceAcordo}%</p>
+                  <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Chance de Defesa:</strong> {processoAtual.chanceDefesa}%</p>
                   <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Valor Sugerido:</strong> {processoAtual.valorSugeridoAcordo}</p>
+                  {processoAtual.valorCondenacaoPrevisto && <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Condenação Prevista:</strong> {processoAtual.valorCondenacaoPrevisto}</p>}
+                  {processoAtual.faixaNegociacao && <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Faixa de Negociação:</strong> {processoAtual.faixaNegociacao}</p>}
+                  {processoAtual.economiaEstimada && <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Economia Estimada:</strong> {processoAtual.economiaEstimada}</p>}
                 </div>
 
                 <div style={{ gridColumn: '1 / -1', marginTop: '10px', paddingTop: '15px', borderTop: '1px solid var(--border-subtle)' }}>
+                  <p style={{ margin: '0 0 10px' }}><strong style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Arquivos do caso sincronizados:</strong></p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
+                    {processoAtual.documentos?.autosPdf && (
+                      <button type="button" onClick={() => abrirArquivo(processoAtual.documentos.autosPdf)} className="btn-enter-outline" style={{ padding: '8px 12px', borderRadius: '8px', cursor: 'pointer' }}>Abrir Autos</button>
+                    )}
+                    {processoAtual.documentos?.defesaPdf && (
+                      <button type="button" onClick={() => abrirArquivo(processoAtual.documentos.defesaPdf)} className="btn-enter-outline" style={{ padding: '8px 12px', borderRadius: '8px', cursor: 'pointer' }}>Abrir Defesa.pdf</button>
+                    )}
+                  </div>
+
                   <p style={{ margin: '0 0 10px' }}><strong style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Documentos Base da IA (Auditoria de Leitura):</strong></p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {Object.entries(processoAtual.subsidios || {}).filter(([chave, valorBinario]) => valorBinario === 1).map(([chave]) => {
@@ -387,6 +508,17 @@ function App() {
                   </div>
                 </div>
 
+                {(processoAtual.subsidiosPrioritarios?.length > 0 || processoAtual.subsidiosAusentesCriticos?.length > 0) && (
+                  <div style={{ gridColumn: '1 / -1', marginTop: '5px', paddingTop: '15px', borderTop: '1px solid var(--border-subtle)' }}>
+                    {processoAtual.subsidiosPrioritarios?.length > 0 && (
+                      <p style={{ margin: '0 0 8px' }}><strong style={{ color: 'var(--text-soft)' }}>Subsídios prioritários:</strong> {processoAtual.subsidiosPrioritarios.join(', ')}</p>
+                    )}
+                    {processoAtual.subsidiosAusentesCriticos?.length > 0 && (
+                      <p style={{ margin: 0 }}><strong style={{ color: 'var(--text-soft)' }}>Lacunas críticas:</strong> {processoAtual.subsidiosAusentesCriticos.join(', ')}</p>
+                    )}
+                  </div>
+                )}
+
                 {processoAtual.recomendacao === 'ACORDO' && processoAtual.contatoOposicao && (
                   <div style={{ gridColumn: '1 / -1', marginTop: '5px', paddingTop: '15px', borderTop: '1px solid var(--border-subtle)' }}>
                     <p style={{ margin: '0 0 10px' }}><strong style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>Contato para Negociação (Extraído via IA):</strong></p>
@@ -400,6 +532,7 @@ function App() {
                 {processoAtual.recomendacao === 'DEFESA' && (
                   <div style={{ gridColumn: '1 / -1', marginTop: '10px', padding: '15px', borderRadius: '10px', border: '1px solid rgba(250, 204, 21, 0.2)', background: 'linear-gradient(135deg, rgba(0,0,0,0.85) 0%, rgba(60, 30, 8, 0.35) 100%)' }}>
                     <p style={{ margin: 0 }}><strong style={{ color: 'var(--color-accent)' }}>Justificativa da IA para litígio:</strong> {processoAtual.justificativa}</p>
+                    {processoAtual.estrategiaDefesa && <p style={{ margin: '12px 0 0' }}><strong style={{ color: 'var(--text-soft)' }}>Estratégia:</strong> {processoAtual.estrategiaDefesa}</p>}
                   </div>
                 )}
               </div>
@@ -429,6 +562,7 @@ function App() {
           <p style={{ margin: '0 0 24px', color: 'var(--text-soft)', fontSize: '15px' }}>
             Dados reais extraídos dos <strong>{dashTotalIA} processos</strong> carregados pela IA.
           </p>
+          <p style={{ margin: '0 0 20px', color: 'var(--color-primary)', fontSize: '13px' }}>Origem da base: {origemBase}</p>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
             
@@ -462,6 +596,65 @@ function App() {
                 <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.9rem' }}>{dashQtdAcordo} processos</p>
                 <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.9rem' }}>{dashQtdDefesa} processos</p>
               </div>
+            </section>
+          </div>
+
+          <div style={{ marginTop: '32px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
+            <section style={{ borderTop: '4px solid var(--color-primary)' }}>
+              <h3 style={{ color: 'var(--color-primary)' }}>Qualidade do modelo de decisão</h3>
+              {!monitorModelo?.disponivel && (
+                <p style={{ margin: 0, color: 'var(--text-soft)' }}>Métricas do modelo ainda não sincronizadas.</p>
+              )}
+              {monitorModelo?.disponivel && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(120px, 1fr))', gap: '14px', marginTop: '18px' }}>
+                    <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(250, 204, 21, 0.07)', border: '1px solid rgba(250, 204, 21, 0.2)' }}>
+                      <div style={{ color: 'var(--text-soft)', fontSize: '0.8rem' }}>Acurácia</div>
+                      <div style={{ color: '#fff', fontSize: '1.7rem', fontWeight: 800 }}>{formatarPercentual(monitorModelo.metrics?.accuracy, 2)}</div>
+                    </div>
+                    <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(251, 146, 60, 0.07)', border: '1px solid rgba(251, 146, 60, 0.2)' }}>
+                      <div style={{ color: 'var(--text-soft)', fontSize: '0.8rem' }}>ROC AUC</div>
+                      <div style={{ color: '#fff', fontSize: '1.7rem', fontWeight: 800 }}>{formatarPercentual(monitorModelo.metrics?.roc_auc, 2)}</div>
+                    </div>
+                    <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ color: 'var(--text-soft)', fontSize: '0.8rem' }}>Precisão Defesa</div>
+                      <div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{formatarPercentual(monitorModelo.metrics?.precision_defesa, 2)}</div>
+                    </div>
+                    <div style={{ padding: '14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ color: 'var(--text-soft)', fontSize: '0.8rem' }}>Recall Defesa</div>
+                      <div style={{ color: '#fff', fontSize: '1.4rem', fontWeight: 700 }}>{formatarPercentual(monitorModelo.metrics?.recall_defesa, 2)}</div>
+                    </div>
+                  </div>
+                  <p style={{ margin: '14px 0 0', color: 'var(--text-soft)', fontSize: '0.85rem' }}>
+                    Base histórica: {monitorModelo.metrics?.base_historica ?? 'N/D'} casos | limiar de defesa: {monitorModelo.metrics?.limiar_defesa ?? 'N/D'}
+                  </p>
+                </>
+              )}
+            </section>
+
+            <section style={{ borderTop: '4px solid var(--color-accent)' }}>
+              <h3 style={{ color: 'var(--color-accent)' }}>Influência das features</h3>
+              <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', marginBottom: '18px' }}>
+                Barras maiores indicam maior peso na decisão. Os subsídios documentais estão destacados.
+              </p>
+              {!monitorModelo?.disponivel && (
+                <p style={{ margin: 0, color: 'var(--text-soft)' }}>Sem dados de feature importance sincronizados.</p>
+              )}
+              {monitorModelo?.disponivel && (
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {montarFeaturesMonitoradas(monitorModelo.feature_importances).map((feature) => (
+                    <div key={feature.nome}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', marginBottom: '4px', fontSize: '0.9rem' }}>
+                        <span style={{ color: feature.subsidio ? 'var(--color-primary)' : '#fff', fontWeight: feature.subsidio ? 700 : 500 }}>{feature.nome}</span>
+                        <span style={{ color: 'var(--text-soft)' }}>{feature.valor.toFixed(4)}</span>
+                      </div>
+                      <div style={{ width: '100%', height: '10px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                        <div style={{ width: feature.largura, height: '100%', borderRadius: '999px', background: feature.subsidio ? 'linear-gradient(90deg, #facc15, #fb923c)' : 'linear-gradient(90deg, #475569, #94a3b8)' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
 
